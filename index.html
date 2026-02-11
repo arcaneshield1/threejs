@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Three.js Playground</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #0a0a0a;
+      color: #e0e0e0;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ---- Sidebar ---- */
+    #sidebar {
+      width: 280px;
+      min-width: 280px;
+      background: #111;
+      border-right: 1px solid #222;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+
+    #sidebar h1 {
+      font-size: 16px;
+      padding: 16px;
+      border-bottom: 1px solid #222;
+      color: #fff;
+    }
+
+    #sidebar h1 span { color: #6e8efb; }
+
+    .demo-list { list-style: none; padding: 8px; }
+
+    .demo-list li {
+      padding: 10px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: background 0.15s;
+    }
+
+    .demo-list li:hover { background: #1a1a2e; }
+    .demo-list li.active { background: #1a1a2e; color: #6e8efb; font-weight: 600; }
+
+    .demo-list li .tag {
+      display: inline-block;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 3px;
+      margin-left: 6px;
+      background: #222;
+      color: #888;
+      vertical-align: middle;
+    }
+
+    #controls {
+      padding: 16px;
+      border-top: 1px solid #222;
+      margin-top: auto;
+    }
+
+    #controls h3 {
+      font-size: 12px;
+      text-transform: uppercase;
+      color: #666;
+      margin-bottom: 10px;
+      letter-spacing: 0.5px;
+    }
+
+    .control-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+
+    .control-row label { color: #aaa; }
+
+    .control-row input[type="range"] {
+      width: 120px;
+      accent-color: #6e8efb;
+    }
+
+    .control-row input[type="color"] {
+      width: 32px;
+      height: 24px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      background: none;
+    }
+
+    #btn-wireframe, #btn-animate {
+      width: 100%;
+      padding: 8px;
+      margin-top: 6px;
+      border: 1px solid #333;
+      border-radius: 6px;
+      background: #1a1a1a;
+      color: #ccc;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    #btn-wireframe:hover, #btn-animate:hover { background: #222; }
+    #btn-wireframe.on, #btn-animate.on { background: #1a1a2e; color: #6e8efb; border-color: #6e8efb; }
+
+    /* ---- Main viewport ---- */
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    #info-bar {
+      height: 36px;
+      background: #111;
+      border-bottom: 1px solid #222;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      font-size: 12px;
+      color: #666;
+    }
+
+    #info-bar span { margin-right: 20px; }
+    #info-bar .fps { color: #4caf50; }
+
+    #canvas-container {
+      flex: 1;
+      position: relative;
+    }
+
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <h1><span>Three.js</span> Playground</h1>
+
+    <ul class="demo-list" id="demo-list">
+      <li class="active" data-demo="rotating-cube">Rotating Cube <span class="tag">basic</span></li>
+      <li data-demo="sphere-grid">Sphere Grid <span class="tag">geometry</span></li>
+      <li data-demo="particles">Particle System <span class="tag">points</span></li>
+      <li data-demo="torus-knot">Torus Knot <span class="tag">geometry</span></li>
+      <li data-demo="shader-plane">Shader Plane <span class="tag">shader</span></li>
+      <li data-demo="physics-boxes">Bouncing Boxes <span class="tag">animation</span></li>
+    </ul>
+
+    <div id="controls">
+      <h3>Controls</h3>
+      <div class="control-row">
+        <label>Speed</label>
+        <input type="range" id="ctrl-speed" min="0" max="5" step="0.1" value="1" />
+      </div>
+      <div class="control-row">
+        <label>Color</label>
+        <input type="color" id="ctrl-color" value="#6e8efb" />
+      </div>
+      <div class="control-row">
+        <label>Scale</label>
+        <input type="range" id="ctrl-scale" min="0.2" max="3" step="0.1" value="1" />
+      </div>
+      <button id="btn-wireframe">Wireframe: Off</button>
+      <button id="btn-animate">Pause Animation</button>
+    </div>
+  </div>
+
+  <!-- Main area -->
+  <div id="main">
+    <div id="info-bar">
+      <span class="fps">FPS: --</span>
+      <span id="demo-label">Demo: Rotating Cube</span>
+      <span>Drag to orbit &middot; Scroll to zoom</span>
+    </div>
+    <div id="canvas-container"></div>
+  </div>
+
+  <!-- Three.js from CDN (ES module) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // ---- Renderer, Scene, Camera ----
+    const container = document.getElementById('canvas-container');
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.shadowMap.enabled = true;
+    container.appendChild(renderer.domElement);
+
+    let scene, camera, controls;
+    let animating = true;
+    let speed = 1;
+    let currentColor = new THREE.Color(0x6e8efb);
+    let currentScale = 1;
+    let wireframe = false;
+    let currentDemo = 'rotating-cube';
+    let demoObjects = [];
+    let demoUpdate = null;
+
+    function initBase() {
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0a0a0a);
+      scene.fog = new THREE.Fog(0x0a0a0a, 15, 40);
+
+      camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.1, 100);
+      camera.position.set(3, 3, 5);
+
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.08;
+
+      // Lights
+      const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+      scene.add(ambient);
+
+      const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+      dir.position.set(5, 8, 5);
+      dir.castShadow = true;
+      scene.add(dir);
+
+      // Grid helper
+      const grid = new THREE.GridHelper(20, 20, 0x222222, 0x181818);
+      scene.add(grid);
+    }
+
+    // ---- Demos ----
+
+    const demos = {
+      'rotating-cube': () => {
+        const geo = new THREE.BoxGeometry(1.5, 1.5, 1.5);
+        const mat = new THREE.MeshStandardMaterial({ color: currentColor, wireframe, roughness: 0.3, metalness: 0.6 });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.y = 1;
+        mesh.castShadow = true;
+        scene.add(mesh);
+        demoObjects = [mesh];
+        demoUpdate = (t) => {
+          mesh.rotation.x = t * 0.5 * speed;
+          mesh.rotation.y = t * 0.7 * speed;
+          mesh.scale.setScalar(currentScale);
+        };
+      },
+
+      'sphere-grid': () => {
+        const group = new THREE.Group();
+        const geo = new THREE.SphereGeometry(0.3, 32, 32);
+        for (let x = -2; x <= 2; x++) {
+          for (let z = -2; z <= 2; z++) {
+            const mat = new THREE.MeshStandardMaterial({
+              color: currentColor,
+              wireframe,
+              roughness: 0.2 + Math.random() * 0.5,
+              metalness: 0.5,
+            });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(x * 1.2, 0.5, z * 1.2);
+            mesh.castShadow = true;
+            group.add(mesh);
+          }
+        }
+        scene.add(group);
+        demoObjects = [group];
+        demoUpdate = (t) => {
+          group.children.forEach((child, i) => {
+            child.position.y = 0.5 + Math.sin(t * speed + i * 0.5) * 0.5;
+          });
+          group.scale.setScalar(currentScale);
+        };
+      },
+
+      'particles': () => {
+        const count = 5000;
+        const positions = new Float32Array(count * 3);
+        for (let i = 0; i < count * 3; i++) {
+          positions[i] = (Math.random() - 0.5) * 15;
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        const mat = new THREE.PointsMaterial({ color: currentColor, size: 0.05, sizeAttenuation: true });
+        const pts = new THREE.Points(geo, mat);
+        scene.add(pts);
+        demoObjects = [pts];
+        demoUpdate = (t) => {
+          pts.rotation.y = t * 0.1 * speed;
+          pts.rotation.x = t * 0.05 * speed;
+          pts.scale.setScalar(currentScale);
+        };
+      },
+
+      'torus-knot': () => {
+        const geo = new THREE.TorusKnotGeometry(1, 0.35, 128, 32);
+        const mat = new THREE.MeshStandardMaterial({ color: currentColor, wireframe, roughness: 0.2, metalness: 0.8 });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.y = 1.5;
+        mesh.castShadow = true;
+        scene.add(mesh);
+        demoObjects = [mesh];
+        demoUpdate = (t) => {
+          mesh.rotation.x = t * 0.3 * speed;
+          mesh.rotation.y = t * 0.5 * speed;
+          mesh.scale.setScalar(currentScale * 0.8);
+        };
+      },
+
+      'shader-plane': () => {
+        const uniforms = {
+          uTime: { value: 0 },
+          uColor: { value: currentColor },
+        };
+        const mat = new THREE.ShaderMaterial({
+          uniforms,
+          wireframe,
+          vertexShader: `
+            uniform float uTime;
+            varying vec2 vUv;
+            void main() {
+              vUv = uv;
+              vec3 pos = position;
+              pos.z += sin(pos.x * 3.0 + uTime) * 0.3 + cos(pos.y * 3.0 + uTime * 0.7) * 0.3;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+            }
+          `,
+          fragmentShader: `
+            uniform vec3 uColor;
+            varying vec2 vUv;
+            void main() {
+              gl_FragColor = vec4(uColor * (0.5 + vUv.y * 0.5), 1.0);
+            }
+          `,
+          side: THREE.DoubleSide,
+        });
+        const geo = new THREE.PlaneGeometry(6, 6, 64, 64);
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.rotation.x = -Math.PI * 0.35;
+        mesh.position.y = 1;
+        scene.add(mesh);
+        demoObjects = [mesh];
+        demoUpdate = (t) => {
+          uniforms.uTime.value = t * speed;
+          uniforms.uColor.value.copy(currentColor);
+          mesh.scale.setScalar(currentScale);
+        };
+      },
+
+      'physics-boxes': () => {
+        const group = new THREE.Group();
+        const geo = new THREE.BoxGeometry(0.6, 0.6, 0.6);
+        const boxes = [];
+        for (let i = 0; i < 20; i++) {
+          const mat = new THREE.MeshStandardMaterial({
+            color: currentColor.clone().offsetHSL(Math.random() * 0.2 - 0.1, 0, 0),
+            wireframe,
+            roughness: 0.4,
+            metalness: 0.5,
+          });
+          const mesh = new THREE.Mesh(geo, mat);
+          mesh.position.set((Math.random() - 0.5) * 5, Math.random() * 5 + 1, (Math.random() - 0.5) * 5);
+          mesh.castShadow = true;
+          mesh.userData.vy = 0;
+          mesh.userData.phase = Math.random() * Math.PI * 2;
+          group.add(mesh);
+          boxes.push(mesh);
+        }
+        scene.add(group);
+        demoObjects = [group];
+        demoUpdate = (t) => {
+          boxes.forEach((box) => {
+            box.position.y = 0.5 + Math.abs(Math.sin(t * speed + box.userData.phase)) * 3;
+            box.rotation.x = t * speed * 0.5;
+            box.rotation.z = t * speed * 0.3;
+          });
+          group.scale.setScalar(currentScale);
+        };
+      },
+    };
+
+    // ---- Load demo ----
+    function loadDemo(name) {
+      // Clean up
+      demoObjects.forEach(obj => {
+        scene.remove(obj);
+        obj.traverse?.(child => {
+          child.geometry?.dispose();
+          child.material?.dispose();
+        });
+      });
+      demoObjects = [];
+      demoUpdate = null;
+
+      if (demos[name]) {
+        demos[name]();
+        currentDemo = name;
+      }
+    }
+
+    // ---- Controls wiring ----
+    document.getElementById('ctrl-speed').addEventListener('input', (e) => { speed = parseFloat(e.target.value); });
+    document.getElementById('ctrl-color').addEventListener('input', (e) => {
+      currentColor.set(e.target.value);
+      demoObjects.forEach(obj => obj.traverse?.(child => {
+        if (child.material && child.material.color) child.material.color.copy(currentColor);
+      }));
+    });
+    document.getElementById('ctrl-scale').addEventListener('input', (e) => { currentScale = parseFloat(e.target.value); });
+
+    document.getElementById('btn-wireframe').addEventListener('click', (e) => {
+      wireframe = !wireframe;
+      e.target.textContent = `Wireframe: ${wireframe ? 'On' : 'Off'}`;
+      e.target.classList.toggle('on', wireframe);
+      demoObjects.forEach(obj => obj.traverse?.(child => {
+        if (child.material) child.material.wireframe = wireframe;
+      }));
+    });
+
+    document.getElementById('btn-animate').addEventListener('click', (e) => {
+      animating = !animating;
+      e.target.textContent = animating ? 'Pause Animation' : 'Resume Animation';
+      e.target.classList.toggle('on', !animating);
+    });
+
+    // Demo list
+    document.querySelectorAll('#demo-list li').forEach(li => {
+      li.addEventListener('click', () => {
+        document.querySelector('#demo-list li.active')?.classList.remove('active');
+        li.classList.add('active');
+        const name = li.dataset.demo;
+        document.getElementById('demo-label').textContent = `Demo: ${li.textContent.trim().split('\n')[0].trim()}`;
+        loadDemo(name);
+      });
+    });
+
+    // ---- Resize ----
+    function resize() {
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      renderer.setSize(w, h);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    }
+    window.addEventListener('resize', resize);
+
+    // ---- Animation loop ----
+    const clock = new THREE.Clock();
+    let frameCount = 0;
+    let lastFpsUpdate = 0;
+    const fpsEl = document.querySelector('.fps');
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const elapsed = clock.getElapsedTime();
+
+      // FPS counter
+      frameCount++;
+      if (elapsed - lastFpsUpdate >= 0.5) {
+        fpsEl.textContent = `FPS: ${Math.round(frameCount / (elapsed - lastFpsUpdate))}`;
+        frameCount = 0;
+        lastFpsUpdate = elapsed;
+      }
+
+      controls.update();
+
+      if (animating && demoUpdate) {
+        demoUpdate(elapsed);
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    // ---- Init ----
+    initBase();
+    resize();
+    loadDemo('rotating-cube');
+    animate();
+  </script>
+</body>
+</html>
