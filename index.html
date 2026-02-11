@@ -158,6 +158,7 @@
       <li data-demo="shader-plane">Shader Plane <span class="tag">shader</span></li>
       <li data-demo="physics-boxes">Bouncing Boxes <span class="tag">animation</span></li>
       <li data-demo="arcane-hexcore">Arcane Hexcore <span class="tag">artifact</span></li>
+      <li data-demo="hexcore-v2">Hexcore V2 <span class="tag">advanced</span></li>
     </ul>
 
     <div id="controls">
@@ -812,6 +813,470 @@
 
         // Adjust camera for this demo
         camera.position.set(0, 2.8, 4.5);
+        controls.target.set(0, 2.0, 0);
+        controls.update();
+      },
+
+      'hexcore-v2': () => {
+        // ============================================================
+        //  HEXCORE V2 — Thick beveled panels, inner rings, core sphere
+        // ============================================================
+        const hexGroup = new THREE.Group();
+        hexGroup.position.y = 2.0;
+        scene.add(hexGroup);
+
+        // ---- Materials (silver/gray metallic palette) ----
+        const panelMat = new THREE.MeshStandardMaterial({
+          color: 0x8a8a94, roughness: 0.22, metalness: 0.88, side: THREE.DoubleSide,
+        });
+        const goldMat = new THREE.MeshStandardMaterial({
+          color: 0xc4a35a, roughness: 0.25, metalness: 0.95,
+          emissive: 0x3a2a10, emissiveIntensity: 0.1,
+        });
+        const runeMat = new THREE.MeshStandardMaterial({
+          color: 0x555562, roughness: 0.3, metalness: 0.8,
+        });
+        const ringMat = new THREE.MeshStandardMaterial({
+          color: 0x7e7e88, roughness: 0.18, metalness: 0.92,
+        });
+        const ringDetailMat = new THREE.MeshStandardMaterial({
+          color: 0x6a6a72, roughness: 0.25, metalness: 0.88,
+        });
+        const coreMat = new THREE.MeshStandardMaterial({
+          color: 0xa8a8b4, roughness: 0.08, metalness: 0.97,
+        });
+        const glowMat = new THREE.MeshStandardMaterial({
+          color: 0xccccdd, emissive: 0x9999bb,
+          emissiveIntensity: 0.8, transparent: true, opacity: 0.7,
+        });
+
+        // ---- Cuboctahedron vertices (12 verts: permutations of ±1,±1,0) ----
+        const R = 1.5;
+        const cv = [
+          [1,1,0],[1,-1,0],[-1,1,0],[-1,-1,0],
+          [1,0,1],[1,0,-1],[-1,0,1],[-1,0,-1],
+          [0,1,1],[0,1,-1],[0,-1,1],[0,-1,-1],
+        ].map(v => new THREE.Vector3(v[0]*R, v[1]*R, v[2]*R));
+
+        const triangleFaces = [
+          [0,4,8],[0,9,5],[2,8,6],[2,7,9],
+          [1,10,4],[1,5,11],[3,6,10],[3,11,7],
+        ];
+        const squareFaces = [
+          [0,4,1,5],[2,7,3,6],[0,8,2,9],
+          [1,11,3,10],[4,8,6,10],[5,9,7,11],
+        ];
+
+        // ---- Helper: thick beveled panel via ExtrudeGeometry ----
+        function createPanel(faceVerts, thickness, bevel) {
+          const center = new THREE.Vector3();
+          faceVerts.forEach(v => center.add(v));
+          center.divideScalar(faceVerts.length);
+
+          const e1 = new THREE.Vector3().subVectors(faceVerts[1], faceVerts[0]);
+          const e2 = new THREE.Vector3().subVectors(faceVerts[2], faceVerts[0]);
+          const normal = new THREE.Vector3().crossVectors(e1, e2).normalize();
+          if (normal.dot(center) < 0) normal.negate();
+
+          // Local 2D axes on face plane
+          let tangent = new THREE.Vector3();
+          if (Math.abs(normal.x) < 0.9)
+            tangent.crossVectors(new THREE.Vector3(1,0,0), normal).normalize();
+          else
+            tangent.crossVectors(new THREE.Vector3(0,1,0), normal).normalize();
+          const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize();
+
+          // Project to 2D, shrink for inter-panel gap
+          const shrink = 0.84;
+          const pts2d = faceVerts.map(v => {
+            const shrunk = new THREE.Vector3().lerpVectors(center, v, shrink);
+            const rel = shrunk.clone().sub(center);
+            return new THREE.Vector2(rel.dot(tangent), rel.dot(bitangent));
+          });
+
+          // Ensure CCW winding
+          let area = 0;
+          for (let i = 0; i < pts2d.length; i++) {
+            const j = (i + 1) % pts2d.length;
+            area += pts2d[i].x * pts2d[j].y - pts2d[j].x * pts2d[i].y;
+          }
+          if (area < 0) pts2d.reverse();
+
+          const shape = new THREE.Shape();
+          shape.moveTo(pts2d[0].x, pts2d[0].y);
+          for (let i = 1; i < pts2d.length; i++) shape.lineTo(pts2d[i].x, pts2d[i].y);
+          shape.closePath();
+
+          const geo = new THREE.ExtrudeGeometry(shape, {
+            depth: thickness,
+            bevelEnabled: true,
+            bevelThickness: bevel,
+            bevelSize: bevel,
+            bevelSegments: 2,
+          });
+          geo.translate(0, 0, -thickness * 0.35);
+
+          const mesh = new THREE.Mesh(geo, panelMat.clone());
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+
+          // Orient local Z to face normal
+          const m4 = new THREE.Matrix4().makeBasis(tangent, bitangent, normal);
+          const q = new THREE.Quaternion().setFromRotationMatrix(m4);
+          mesh.quaternion.copy(q);
+          mesh.position.copy(center);
+
+          return { mesh, center: center.clone(), normal: normal.clone(), quaternion: q.clone() };
+        }
+
+        // ---- Helper: rune symbol variants ----
+        const runeTypes = ['trident','diamond','circle','chevron','arrow','crown','eye','hex'];
+        function createRune(type, size) {
+          const g = new THREE.Group();
+          const d = 0.018;
+          const m = runeMat.clone();
+          if (type === 'trident') {
+            g.add(new THREE.Mesh(new THREE.BoxGeometry(size*0.05, size*0.5, d), m));
+            [-1,0,1].forEach(i => {
+              const p = new THREE.Mesh(new THREE.BoxGeometry(size*0.05, size*0.18, d), m);
+              p.position.set(i*size*0.1, size*0.22, 0);
+              if (i !== 0) p.rotation.z = i * 0.4;
+              g.add(p);
+            });
+          } else if (type === 'diamond') {
+            for (let i = 0; i < 4; i++) {
+              const a = (i/4)*Math.PI*2, na = ((i+1)/4)*Math.PI*2;
+              const bar = new THREE.Mesh(new THREE.BoxGeometry(size*0.22, size*0.035, d), m);
+              bar.position.set(
+                (Math.cos(a)+Math.cos(na))/2*size*0.17,
+                (Math.sin(a)+Math.sin(na))/2*size*0.17, 0
+              );
+              bar.rotation.z = Math.atan2(Math.sin(na)-Math.sin(a), Math.cos(na)-Math.cos(a));
+              g.add(bar);
+            }
+          } else if (type === 'circle') {
+            const ring = new THREE.Mesh(new THREE.TorusGeometry(size*0.14, size*0.02, 8, 16), m);
+            ring.rotation.x = Math.PI/2;
+            g.add(ring);
+            g.add(new THREE.Mesh(new THREE.SphereGeometry(size*0.035, 8, 8), m));
+          } else if (type === 'chevron') {
+            for (let i = 0; i < 3; i++) {
+              [-1,1].forEach(s => {
+                const bar = new THREE.Mesh(new THREE.BoxGeometry(size*0.14, size*0.035, d), m);
+                bar.rotation.z = s * 0.5;
+                bar.position.set(s*size*0.05, -i*size*0.11+size*0.1, 0);
+                g.add(bar);
+              });
+            }
+          } else if (type === 'arrow') {
+            g.add(new THREE.Mesh(new THREE.BoxGeometry(size*0.05, size*0.4, d), m));
+            const head = new THREE.Mesh(new THREE.ConeGeometry(size*0.09, size*0.14, 3), m);
+            head.position.y = size*0.25;
+            g.add(head);
+          } else if (type === 'crown') {
+            const base = new THREE.Mesh(new THREE.BoxGeometry(size*0.32, size*0.04, d), m);
+            base.position.y = -size*0.08;
+            g.add(base);
+            [-1,0,1].forEach(i => {
+              const pt = new THREE.Mesh(new THREE.ConeGeometry(size*0.035, size*0.13, 4), m);
+              pt.position.set(i*size*0.1, size*0.05, 0);
+              g.add(pt);
+            });
+          } else if (type === 'eye') {
+            const ring = new THREE.Mesh(new THREE.TorusGeometry(size*0.12, size*0.018, 8, 16), m);
+            ring.rotation.x = Math.PI/2;
+            g.add(ring);
+            g.add(new THREE.Mesh(new THREE.SphereGeometry(size*0.04, 8, 8), m));
+            [-1,1].forEach(s => {
+              const arc = new THREE.Mesh(new THREE.BoxGeometry(size*0.3, size*0.025, d), m);
+              arc.position.y = s*size*0.1;
+              g.add(arc);
+            });
+          } else if (type === 'hex') {
+            for (let i = 0; i < 6; i++) {
+              const a = (i/6)*Math.PI*2, na = ((i+1)/6)*Math.PI*2;
+              const bar = new THREE.Mesh(new THREE.BoxGeometry(size*0.15, size*0.03, d), m);
+              bar.position.set(
+                (Math.cos(a)+Math.cos(na))/2*size*0.15,
+                (Math.sin(a)+Math.sin(na))/2*size*0.15, 0
+              );
+              bar.rotation.z = Math.atan2(Math.sin(na)-Math.sin(a), Math.cos(na)-Math.cos(a));
+              g.add(bar);
+            }
+            g.add(new THREE.Mesh(new THREE.SphereGeometry(size*0.025, 6, 6), m));
+          }
+          return g;
+        }
+
+        // ---- Build outer panels (8 triangular + 6 square) ----
+        const panelGroup = new THREE.Group();
+        const allPanels = [];
+
+        triangleFaces.forEach((face, idx) => {
+          const verts = face.map(i => cv[i]);
+          const { mesh, center, normal, quaternion } = createPanel(verts, 0.14, 0.04);
+          // Add embossed rune on outer face (local Z direction)
+          const rune = createRune(runeTypes[idx % runeTypes.length], 0.45);
+          rune.position.set(0, 0, 0.14 * 0.7 + 0.01);
+          mesh.add(rune);
+          panelGroup.add(mesh);
+          allPanels.push({
+            mesh, center, normal,
+            startPos: center.clone().add(normal.clone().multiplyScalar(3 + Math.random()*2.5)),
+            startRot: new THREE.Euler(Math.random()*Math.PI*2, Math.random()*Math.PI*2, Math.random()*Math.PI*2),
+            runeGroup: rune,
+          });
+        });
+
+        squareFaces.forEach((face, idx) => {
+          const verts = face.map(i => cv[i]);
+          const { mesh, center, normal, quaternion } = createPanel(verts, 0.10, 0.03);
+          const rune = createRune(runeTypes[(idx+4) % runeTypes.length], 0.35);
+          rune.position.set(0, 0, 0.10 * 0.7 + 0.01);
+          mesh.add(rune);
+          panelGroup.add(mesh);
+          allPanels.push({
+            mesh, center, normal,
+            startPos: center.clone().add(normal.clone().multiplyScalar(3 + Math.random()*2.5)),
+            startRot: new THREE.Euler(Math.random()*Math.PI*2, Math.random()*Math.PI*2, Math.random()*Math.PI*2),
+            runeGroup: rune,
+          });
+        });
+        hexGroup.add(panelGroup);
+
+        // ---- Gold edge trim (cylinders along cuboctahedron edges) ----
+        const edgeSet = new Set();
+        [...triangleFaces, ...squareFaces].forEach(face => {
+          for (let i = 0; i < face.length; i++) {
+            const a = face[i], b = face[(i+1) % face.length];
+            edgeSet.add(Math.min(a,b) + '-' + Math.max(a,b));
+          }
+        });
+        const goldTrimGroup = new THREE.Group();
+        edgeSet.forEach(key => {
+          const [ai, bi] = key.split('-').map(Number);
+          const a = cv[ai], b = cv[bi];
+          const mid = new THREE.Vector3().addVectors(a,b).multiplyScalar(0.5);
+          const dir = new THREE.Vector3().subVectors(b,a);
+          const len = dir.length();
+          const tm = new THREE.Mesh(new THREE.CylinderGeometry(0.024,0.024,len,6), goldMat);
+          tm.position.copy(mid);
+          tm.setRotationFromQuaternion(
+            new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize())
+          );
+          goldTrimGroup.add(tm);
+        });
+        hexGroup.add(goldTrimGroup);
+
+        // ---- Gold accent cubes at key vertices ----
+        const accentGroup = new THREE.Group();
+        [0,1,2,3,8,10].forEach(vi => {
+          const pos = cv[vi];
+          const acc = new THREE.Mesh(new THREE.BoxGeometry(0.08,0.08,0.08), goldMat);
+          acc.position.copy(pos).add(pos.clone().normalize().multiplyScalar(0.05));
+          acc.lookAt(new THREE.Vector3(0,0,0));
+          accentGroup.add(acc);
+        });
+        hexGroup.add(accentGroup);
+
+        // ---- Glowing seam lines in gaps ----
+        const seamGroup = new THREE.Group();
+        edgeSet.forEach(key => {
+          const [ai, bi] = key.split('-').map(Number);
+          const a = cv[ai], b = cv[bi];
+          const mid = new THREE.Vector3().addVectors(a,b).multiplyScalar(0.5);
+          const dir = new THREE.Vector3().subVectors(b,a);
+          const len = dir.length();
+          const sm = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.015,0.015,len*0.82,4), glowMat.clone()
+          );
+          sm.position.copy(mid);
+          sm.setRotationFromQuaternion(
+            new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize())
+          );
+          seamGroup.add(sm);
+        });
+        hexGroup.add(seamGroup);
+
+        // ---- Vertex glow spheres at junctions ----
+        const vertGlowGroup = new THREE.Group();
+        cv.forEach(v => {
+          const gm = new THREE.MeshStandardMaterial({
+            color: 0xffffff, emissive: 0xdddddd,
+            emissiveIntensity: 1.5, transparent: true, opacity: 0.85,
+          });
+          const gMesh = new THREE.Mesh(new THREE.SphereGeometry(0.06,8,8), gm);
+          gMesh.position.copy(v);
+          vertGlowGroup.add(gMesh);
+        });
+        hexGroup.add(vertGlowGroup);
+
+        // ============== INNER STRUCTURE ==============
+
+        // ---- Segmented inner rings at different orientations ----
+        const innerGroup = new THREE.Group();
+
+        function createSegmentedRing(radius, tubeRadius, tiltEuler, segments) {
+          const rg = new THREE.Group();
+          // Base torus
+          rg.add(new THREE.Mesh(
+            new THREE.TorusGeometry(radius, tubeRadius, 12, 48), ringMat.clone()
+          ));
+          // Segment dividers
+          for (let i = 0; i < segments; i++) {
+            const angle = (i / segments) * Math.PI * 2;
+            const div = new THREE.Mesh(
+              new THREE.BoxGeometry(tubeRadius*3, tubeRadius*3, tubeRadius*0.5),
+              ringDetailMat.clone()
+            );
+            div.position.set(Math.cos(angle)*radius, Math.sin(angle)*radius, 0);
+            div.lookAt(0,0,0);
+            rg.add(div);
+          }
+          // Small rune marks between dividers
+          for (let i = 0; i < segments; i++) {
+            const angle = ((i+0.5)/segments) * Math.PI * 2;
+            const mark = new THREE.Mesh(
+              new THREE.BoxGeometry(tubeRadius*1.5, tubeRadius*0.4, tubeRadius*0.3),
+              runeMat.clone()
+            );
+            mark.position.set(Math.cos(angle)*radius, Math.sin(angle)*radius, 0);
+            mark.lookAt(0,0,0);
+            rg.add(mark);
+          }
+          rg.rotation.set(tiltEuler.x, tiltEuler.y, tiltEuler.z);
+          return rg;
+        }
+
+        // Ring 1: equatorial (XZ plane)
+        const ring1 = createSegmentedRing(0.78, 0.055,
+          { x: Math.PI/2, y: 0, z: 0 }, 12);
+        innerGroup.add(ring1);
+        // Ring 2: tilted meridional
+        const ring2 = createSegmentedRing(0.65, 0.045,
+          { x: 0, y: 0, z: Math.PI/6 }, 10);
+        innerGroup.add(ring2);
+        // Ring 3: perpendicular
+        const ring3 = createSegmentedRing(0.52, 0.038,
+          { x: Math.PI/3, y: Math.PI/4, z: 0 }, 8);
+        innerGroup.add(ring3);
+
+        hexGroup.add(innerGroup);
+
+        // ---- Core sphere ----
+        const coreSphere = new THREE.Mesh(
+          new THREE.SphereGeometry(0.30, 32, 32), coreMat
+        );
+        coreSphere.castShadow = true;
+        hexGroup.add(coreSphere);
+
+        // Outer core glow shell
+        const coreGlow = new THREE.Mesh(
+          new THREE.SphereGeometry(0.33, 16, 16),
+          new THREE.MeshStandardMaterial({
+            color: 0xaaaacc, emissive: 0x8888aa,
+            emissiveIntensity: 0.4, transparent: true, opacity: 0.25,
+          })
+        );
+        hexGroup.add(coreGlow);
+
+        // Inner point light
+        const innerLight = new THREE.PointLight(0xcccccc, 0.6, 5);
+        hexGroup.add(innerLight);
+
+        // ============== ASSEMBLY ANIMATION ==============
+        let assemblyTime = 0;
+        const assemblyDuration = 2.5;
+        let assembled = false;
+
+        // Capture assembled transforms, then scatter panels outward
+        allPanels.forEach(p => {
+          p.assembledQ = p.mesh.quaternion.clone();
+          p.assembledPos = p.mesh.position.clone();
+          p.mesh.position.copy(p.startPos);
+          p.startQ = new THREE.Quaternion().setFromEuler(p.startRot);
+          p.mesh.quaternion.copy(p.startQ);
+        });
+
+        // Hide detail layers during scatter
+        [goldTrimGroup, accentGroup, seamGroup, vertGlowGroup].forEach(g => {
+          g.visible = false;
+        });
+
+        demoObjects = [hexGroup];
+
+        demoUpdate = (t) => {
+          // ---- Assembly phase ----
+          if (!assembled) {
+            assemblyTime += 0.016 * speed;
+            const progress = Math.min(assemblyTime / assemblyDuration, 1.0);
+            const ease = 1 - Math.pow(1 - progress, 3);
+
+            allPanels.forEach(p => {
+              p.mesh.position.lerpVectors(p.startPos, p.assembledPos, ease);
+              p.mesh.quaternion.slerpQuaternions(p.startQ, p.assembledQ, ease);
+            });
+
+            if (progress > 0.65) {
+              const fade = (progress - 0.65) / 0.35;
+              [goldTrimGroup, accentGroup, seamGroup, vertGlowGroup].forEach(g => {
+                g.visible = true;
+              });
+              seamGroup.children.forEach(c => { if (c.material) c.material.opacity = fade * 0.7; });
+              vertGlowGroup.children.forEach(c => { if (c.material) c.material.opacity = fade * 0.85; });
+            }
+
+            if (progress >= 1.0) {
+              assembled = true;
+              allPanels.forEach(p => {
+                p.mesh.position.copy(p.assembledPos);
+                p.mesh.quaternion.copy(p.assembledQ);
+              });
+            }
+          }
+
+          // ---- Idle rotation (~20s per revolution) ----
+          hexGroup.rotation.y = t * (Math.PI * 2 / 20) * speed;
+
+          // ---- Gentle bobbing ----
+          hexGroup.position.y = 2.0 + Math.sin(t * 0.8 * speed) * 0.08;
+
+          // ---- Inner rings slow independent spin ----
+          ring1.rotation.z += 0.0012 * speed;
+          ring2.rotation.x += 0.0009 * speed;
+          ring3.rotation.y += 0.0014 * speed;
+
+          // ---- Pulsing seam glow ----
+          const glowI = 0.5 + 0.5 * Math.sin(t * 1.5 * speed);
+          const glowVal = 0.5 + 0.5 * glowI;
+          seamGroup.children.forEach(c => {
+            if (c.material && c.material.emissive) c.material.emissiveIntensity = glowVal;
+          });
+          vertGlowGroup.children.forEach(c => {
+            if (c.material && c.material.emissive) c.material.emissiveIntensity = glowVal * 1.4;
+          });
+          innerLight.intensity = 0.3 + 0.5 * glowVal;
+          coreGlow.material.emissiveIntensity = 0.2 + 0.3 * glowI;
+
+          // ---- Rune fade/rotate on panels ----
+          allPanels.forEach((p, i) => {
+            const rune = p.runeGroup;
+            if (!rune) return;
+            rune.children.forEach((child, ci) => {
+              child.rotation.z += 0.0015 * speed * (ci % 2 === 0 ? 1 : -1);
+            });
+            const op = 0.35 + 0.45 * (0.5 + 0.5 * Math.sin(t * 0.4 * speed + i * 1.3));
+            rune.children.forEach(child => {
+              if (child.material) child.material.opacity = op;
+            });
+          });
+
+          // ---- Scale ----
+          hexGroup.scale.setScalar(currentScale);
+        };
+
+        // Camera for this demo
+        camera.position.set(0, 3.2, 5.0);
         controls.target.set(0, 2.0, 0);
         controls.update();
       },
