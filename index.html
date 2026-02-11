@@ -157,6 +157,7 @@
       <li data-demo="torus-knot">Torus Knot <span class="tag">geometry</span></li>
       <li data-demo="shader-plane">Shader Plane <span class="tag">shader</span></li>
       <li data-demo="physics-boxes">Bouncing Boxes <span class="tag">animation</span></li>
+      <li data-demo="arcane-hexcore">Arcane Hexcore <span class="tag">artifact</span></li>
     </ul>
 
     <div id="controls">
@@ -393,6 +394,426 @@
           });
           group.scale.setScalar(currentScale);
         };
+      },
+
+      'arcane-hexcore': () => {
+        const hexGroup = new THREE.Group();
+        hexGroup.position.y = 2.0;
+        scene.add(hexGroup);
+
+        // --- Materials ---
+        const panelMat = new THREE.MeshStandardMaterial({
+          color: 0x2a2a3a,
+          roughness: 0.2,
+          metalness: 0.85,
+          wireframe,
+        });
+        const goldMat = new THREE.MeshStandardMaterial({
+          color: 0xc4a35a,
+          roughness: 0.25,
+          metalness: 0.95,
+          emissive: 0x3a2a10,
+          emissiveIntensity: 0.15,
+        });
+        const glowMat = new THREE.MeshStandardMaterial({
+          color: 0xdddddd,
+          emissive: 0xcccccc,
+          emissiveIntensity: 1.0,
+          transparent: true,
+          opacity: 0.9,
+        });
+        const runeMat = new THREE.MeshStandardMaterial({
+          color: 0x44445a,
+          roughness: 0.3,
+          metalness: 0.7,
+          transparent: true,
+          opacity: 0.7,
+        });
+
+        // --- Cuboctahedron vertices ---
+        // A cuboctahedron has 12 vertices: permutations of (±1, ±1, 0)
+        const s = 1.4; // scale factor
+        const cv = [
+          [1,1,0],  [1,-1,0],  [-1,1,0],  [-1,-1,0],
+          [1,0,1],  [1,0,-1],  [-1,0,1],   [-1,0,-1],
+          [0,1,1],  [0,1,-1],  [0,-1,1],   [0,-1,-1],
+        ].map(v => new THREE.Vector3(v[0]*s, v[1]*s, v[2]*s));
+
+        // --- Triangular faces (8 triangles) of the cuboctahedron ---
+        const triFaces = [
+          [0,4,8],   [0,8,2],   [2,6,8],   [4,6,10],
+          [0,5,9],   [1,5,4],   [3,7,11],  [1,10,11],
+          // additional triangles to complete
+          [2,9,7],   [3,6,2],   [1,11,5],  [3,10,6],
+          [9,5,11],  [9,11,7],  [8,4,10],  [8,10,6],  // not used, fill below
+        ];
+        // Correct cuboctahedron 8 triangular faces
+        const triIdx = [
+          [0,4,8],  [0,8,2],  [2,8,6],  [6,8,4],   // top-ish (wrong)
+          // Actually let's define properly
+        ];
+
+        // Let me build the cuboctahedron properly with explicit face definitions
+        // The 8 triangular faces of a cuboctahedron
+        const triangleFaces = [
+          [0, 4, 8],  // +x,+y,+z octant
+          [0, 9, 5],  // +x,+y,-z octant
+          [2, 8, 6],  // -x,+y,+z octant
+          [2, 7, 9],  // -x,+y,-z octant
+          [1, 10, 4], // +x,-y,+z octant
+          [1, 5, 11], // +x,-y,-z octant
+          [3, 6, 10], // -x,-y,+z octant
+          [3, 11, 7], // -x,-y,-z octant
+        ];
+
+        // The 6 square faces of a cuboctahedron
+        const squareFaces = [
+          [0, 4, 1, 5],    // +x face
+          [2, 7, 3, 6],    // -x face
+          [0, 8, 2, 9],    // +y face
+          [1, 11, 3, 10],  // -y face
+          [4, 8, 6, 10],   // +z face
+          [5, 9, 7, 11],   // -z face
+        ];
+
+        const panelMeshes = [];
+        const panelData = []; // store for rune animation
+
+        // Helper: create triangle mesh
+        function makeTriPanel(i0, i1, i2) {
+          const geo = new THREE.BufferGeometry();
+          const v0 = cv[i0], v1 = cv[i1], v2 = cv[i2];
+          // Shrink slightly toward center for gap
+          const center = new THREE.Vector3().add(v0).add(v1).add(v2).divideScalar(3);
+          const shrink = 0.94;
+          const a = new THREE.Vector3().lerpVectors(center, v0, shrink);
+          const b = new THREE.Vector3().lerpVectors(center, v1, shrink);
+          const c = new THREE.Vector3().lerpVectors(center, v2, shrink);
+          const verts = new Float32Array([a.x,a.y,a.z, b.x,b.y,b.z, c.x,c.y,c.z]);
+          geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+          geo.computeVertexNormals();
+          const mesh = new THREE.Mesh(geo, panelMat.clone());
+          mesh.castShadow = true;
+          // Store target and start positions for assembly
+          mesh.userData.targetPos = new THREE.Vector3(0, 0, 0);
+          mesh.userData.targetRot = new THREE.Euler(0, 0, 0);
+          mesh.userData.startPos = center.clone().multiplyScalar(4 + Math.random() * 3);
+          mesh.userData.startRot = new THREE.Euler(
+            Math.random() * Math.PI * 2,
+            Math.random() * Math.PI * 2,
+            Math.random() * Math.PI * 2
+          );
+          return mesh;
+        }
+
+        // Helper: create quad panel from 4 vertices
+        function makeQuadPanel(i0, i1, i2, i3) {
+          const geo = new THREE.BufferGeometry();
+          const v0 = cv[i0], v1 = cv[i1], v2 = cv[i2], v3 = cv[i3];
+          const center = new THREE.Vector3().add(v0).add(v1).add(v2).add(v3).divideScalar(4);
+          const shrink = 0.92;
+          const a = new THREE.Vector3().lerpVectors(center, v0, shrink);
+          const b = new THREE.Vector3().lerpVectors(center, v1, shrink);
+          const c = new THREE.Vector3().lerpVectors(center, v2, shrink);
+          const d = new THREE.Vector3().lerpVectors(center, v3, shrink);
+          const verts = new Float32Array([
+            a.x,a.y,a.z, b.x,b.y,b.z, c.x,c.y,c.z,
+            a.x,a.y,a.z, c.x,c.y,c.z, d.x,d.y,d.z,
+          ]);
+          geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+          geo.computeVertexNormals();
+          const mesh = new THREE.Mesh(geo, panelMat.clone());
+          mesh.castShadow = true;
+          mesh.userData.targetPos = new THREE.Vector3(0, 0, 0);
+          mesh.userData.targetRot = new THREE.Euler(0, 0, 0);
+          mesh.userData.startPos = center.clone().multiplyScalar(4 + Math.random() * 3);
+          mesh.userData.startRot = new THREE.Euler(
+            Math.random() * Math.PI * 2,
+            Math.random() * Math.PI * 2,
+            Math.random() * Math.PI * 2
+          );
+          return mesh;
+        }
+
+        // Create triangular panels
+        triangleFaces.forEach((face, idx) => {
+          const mesh = makeTriPanel(face[0], face[1], face[2]);
+          hexGroup.add(mesh);
+          panelMeshes.push(mesh);
+          panelData.push({ type: 'tri', index: idx, runePhase: Math.random() * Math.PI * 2 });
+        });
+
+        // Create square panels
+        squareFaces.forEach((face, idx) => {
+          const mesh = makeQuadPanel(face[0], face[1], face[2], face[3]);
+          hexGroup.add(mesh);
+          panelMeshes.push(mesh);
+          panelData.push({ type: 'quad', index: idx, runePhase: Math.random() * Math.PI * 2 });
+        });
+
+        // --- Gold edge trim (lines along each edge of the cuboctahedron) ---
+        const edgeSet = new Set();
+        function addEdge(a, b) {
+          const key = Math.min(a,b) + '-' + Math.max(a,b);
+          if (!edgeSet.has(key)) {
+            edgeSet.add(key);
+            return true;
+          }
+          return false;
+        }
+        const edgeVertices = [];
+        [...triangleFaces, ...squareFaces].forEach(face => {
+          for (let i = 0; i < face.length; i++) {
+            const a = face[i], b = face[(i+1) % face.length];
+            if (addEdge(a, b)) {
+              edgeVertices.push(cv[a].x, cv[a].y, cv[a].z, cv[b].x, cv[b].y, cv[b].z);
+            }
+          }
+        });
+
+        // Gold trim using cylinder tubes along edges
+        const goldTrimGroup = new THREE.Group();
+        const trimRadius = 0.018;
+        edgeSet.forEach(key => {
+          const [aIdx, bIdx] = key.split('-').map(Number);
+          const a = cv[aIdx], b = cv[bIdx];
+          const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+          const dir = new THREE.Vector3().subVectors(b, a);
+          const len = dir.length();
+          const trimGeo = new THREE.CylinderGeometry(trimRadius, trimRadius, len, 6);
+          const trimMesh = new THREE.Mesh(trimGeo, goldMat);
+          trimMesh.position.copy(mid);
+          // Orient cylinder along the edge direction
+          const axis = new THREE.Vector3(0, 1, 0);
+          const quat = new THREE.Quaternion().setFromUnitVectors(axis, dir.clone().normalize());
+          trimMesh.setRotationFromQuaternion(quat);
+          goldTrimGroup.add(trimMesh);
+        });
+        hexGroup.add(goldTrimGroup);
+
+        // --- Small gold accent squares at vertices ---
+        const accentVertices = [0, 1, 2, 3, 8, 10]; // 6 vertices around equator & poles
+        const accentGroup = new THREE.Group();
+        accentVertices.forEach(vi => {
+          const pos = cv[vi];
+          const accentGeo = new THREE.BoxGeometry(0.06, 0.06, 0.06);
+          const accentMesh = new THREE.Mesh(accentGeo, goldMat);
+          // Position slightly outside the vertex
+          const dir = pos.clone().normalize();
+          accentMesh.position.copy(pos).add(dir.multiplyScalar(0.03));
+          accentMesh.lookAt(new THREE.Vector3(0, 0, 0));
+          accentGroup.add(accentMesh);
+        });
+        hexGroup.add(accentGroup);
+
+        // --- Glowing seam lines (emissive lines in the gaps between panels) ---
+        const seamGroup = new THREE.Group();
+        // Place glowing lines slightly outside each edge
+        edgeSet.forEach(key => {
+          const [aIdx, bIdx] = key.split('-').map(Number);
+          const a = cv[aIdx], b = cv[bIdx];
+          const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+          const dir = new THREE.Vector3().subVectors(b, a);
+          const len = dir.length();
+          const seamGeo = new THREE.CylinderGeometry(0.012, 0.012, len * 0.85, 4);
+          const seamMesh = new THREE.Mesh(seamGeo, glowMat.clone());
+          seamMesh.position.copy(mid);
+          const axis = new THREE.Vector3(0, 1, 0);
+          const quat = new THREE.Quaternion().setFromUnitVectors(axis, dir.clone().normalize());
+          seamMesh.setRotationFromQuaternion(quat);
+          seamGroup.add(seamMesh);
+        });
+        hexGroup.add(seamGroup);
+
+        // --- Vertex glow points (brighter at junction points) ---
+        const vertGlowGroup = new THREE.Group();
+        cv.forEach(v => {
+          const glowGeo = new THREE.SphereGeometry(0.05, 8, 8);
+          const glowPointMat = new THREE.MeshStandardMaterial({
+            color: 0xffffff,
+            emissive: 0xdddddd,
+            emissiveIntensity: 1.5,
+            transparent: true,
+            opacity: 0.85,
+          });
+          const glowMesh = new THREE.Mesh(glowGeo, glowPointMat);
+          glowMesh.position.copy(v);
+          vertGlowGroup.add(glowMesh);
+        });
+        hexGroup.add(vertGlowGroup);
+
+        // --- Rune symbols on panels (using small plane geometries with rune-like shapes) ---
+        const runeGroup = new THREE.Group();
+        const runeShapes = [];
+
+        function createRuneSymbol(center, normal, size) {
+          // Create a small plane with a rune-like cross/diamond pattern
+          const group = new THREE.Group();
+          const barGeo = new THREE.BoxGeometry(size * 0.6, size * 0.04, size * 0.02);
+
+          // Horizontal bar
+          const h = new THREE.Mesh(barGeo, runeMat.clone());
+          group.add(h);
+          // Vertical bar
+          const v = new THREE.Mesh(barGeo, runeMat.clone());
+          v.rotation.z = Math.PI / 2;
+          group.add(v);
+          // Diagonal bars for diamond
+          const d1 = new THREE.Mesh(barGeo.clone(), runeMat.clone());
+          d1.rotation.z = Math.PI / 4;
+          d1.scale.setScalar(0.7);
+          group.add(d1);
+          const d2 = new THREE.Mesh(barGeo.clone(), runeMat.clone());
+          d2.rotation.z = -Math.PI / 4;
+          d2.scale.setScalar(0.7);
+          group.add(d2);
+
+          // Small circle
+          const circGeo = new THREE.RingGeometry(size * 0.12, size * 0.16, 12);
+          const circMesh = new THREE.Mesh(circGeo, runeMat.clone());
+          group.add(circMesh);
+
+          // Position and orient to face outward from center
+          group.position.copy(center);
+          group.lookAt(center.clone().multiplyScalar(2));
+
+          return group;
+        }
+
+        // Add runes to triangular faces
+        triangleFaces.forEach((face) => {
+          const center = new THREE.Vector3();
+          face.forEach(i => center.add(cv[i]));
+          center.divideScalar(3);
+          const normal = center.clone().normalize();
+          // Push slightly outward from the face
+          const runePos = center.clone().add(normal.clone().multiplyScalar(0.02));
+          const runeSymbol = createRuneSymbol(runePos, normal, 0.35);
+          runeSymbol.userData.phase = Math.random() * Math.PI * 2;
+          runeSymbol.userData.basePos = runePos.clone();
+          runeGroup.add(runeSymbol);
+          runeShapes.push(runeSymbol);
+        });
+
+        // Add runes to some square faces
+        squareFaces.forEach((face, idx) => {
+          if (idx % 2 === 0) return; // Only some faces get runes
+          const center = new THREE.Vector3();
+          face.forEach(i => center.add(cv[i]));
+          center.divideScalar(4);
+          const normal = center.clone().normalize();
+          const runePos = center.clone().add(normal.clone().multiplyScalar(0.02));
+          const runeSymbol = createRuneSymbol(runePos, normal, 0.28);
+          runeSymbol.userData.phase = Math.random() * Math.PI * 2;
+          runeSymbol.userData.basePos = runePos.clone();
+          runeGroup.add(runeSymbol);
+          runeShapes.push(runeSymbol);
+        });
+        hexGroup.add(runeGroup);
+
+        // --- Point light inside for inner glow ---
+        const innerLight = new THREE.PointLight(0xcccccc, 0.6, 5);
+        innerLight.position.set(0, 0, 0);
+        hexGroup.add(innerLight);
+
+        // --- Assembly animation state ---
+        let assemblyTime = 0;
+        const assemblyDuration = 2.5;
+        let assembled = false;
+
+        // Store original positions for assembly
+        panelMeshes.forEach(mesh => {
+          mesh.position.copy(mesh.userData.startPos);
+          mesh.rotation.copy(mesh.userData.startRot);
+        });
+        // Also scatter trim, accents, seams, runes, vert glows
+        [goldTrimGroup, accentGroup, seamGroup, runeGroup, vertGlowGroup].forEach(g => {
+          g.visible = false;
+        });
+
+        demoObjects = [hexGroup];
+
+        demoUpdate = (t) => {
+          // --- Assembly animation ---
+          if (!assembled) {
+            assemblyTime += 0.016 * speed;
+            const progress = Math.min(assemblyTime / assemblyDuration, 1.0);
+            // Smooth ease-out cubic
+            const ease = 1 - Math.pow(1 - progress, 3);
+
+            panelMeshes.forEach(mesh => {
+              mesh.position.lerpVectors(mesh.userData.startPos, mesh.userData.targetPos, ease);
+              // Interpolate rotation
+              mesh.rotation.x = mesh.userData.startRot.x * (1 - ease);
+              mesh.rotation.y = mesh.userData.startRot.y * (1 - ease);
+              mesh.rotation.z = mesh.userData.startRot.z * (1 - ease);
+            });
+
+            if (progress > 0.7) {
+              [goldTrimGroup, accentGroup, seamGroup, runeGroup, vertGlowGroup].forEach(g => {
+                g.visible = true;
+                // Fade in effect via opacity on glow materials
+                const fadeProgress = (progress - 0.7) / 0.3;
+                seamGroup.children.forEach(child => {
+                  if (child.material) child.material.opacity = fadeProgress * 0.9;
+                });
+                vertGlowGroup.children.forEach(child => {
+                  if (child.material) child.material.opacity = fadeProgress * 0.85;
+                });
+              });
+            }
+
+            if (progress >= 1.0) {
+              assembled = true;
+              panelMeshes.forEach(mesh => {
+                mesh.position.copy(mesh.userData.targetPos);
+                mesh.rotation.set(0, 0, 0);
+              });
+            }
+          }
+
+          // --- Slow Y-axis rotation (1 full rotation per ~20 seconds) ---
+          hexGroup.rotation.y = t * (Math.PI * 2 / 20) * speed;
+
+          // --- Gentle bobbing float ---
+          hexGroup.position.y = 2.0 + Math.sin(t * 0.8 * speed) * 0.08;
+
+          // --- Pulsing seam glow ---
+          const glowIntensity = 0.6 + 0.4 * (0.5 + 0.5 * Math.sin(t * 1.5 * speed));
+          seamGroup.children.forEach(child => {
+            if (child.material && child.material.emissive) {
+              child.material.emissiveIntensity = glowIntensity;
+            }
+          });
+          vertGlowGroup.children.forEach(child => {
+            if (child.material && child.material.emissive) {
+              child.material.emissiveIntensity = glowIntensity * 1.3;
+            }
+          });
+          innerLight.intensity = 0.3 + 0.4 * glowIntensity;
+
+          // --- Rune fade/shift animation ---
+          runeShapes.forEach((rune, i) => {
+            const phase = rune.userData.phase;
+            // Slow rotation on the rune itself
+            rune.children.forEach((child, ci) => {
+              child.rotation.z += 0.002 * speed * (ci % 2 === 0 ? 1 : -1);
+            });
+            // Fade runes in and out
+            const runeOpacity = 0.3 + 0.5 * (0.5 + 0.5 * Math.sin(t * 0.5 * speed + phase));
+            rune.children.forEach(child => {
+              if (child.material) child.material.opacity = runeOpacity;
+            });
+          });
+
+          // --- Scale ---
+          hexGroup.scale.setScalar(currentScale);
+        };
+
+        // Adjust camera for this demo
+        camera.position.set(0, 2.8, 4.5);
+        controls.target.set(0, 2.0, 0);
+        controls.update();
       },
     };
 
